@@ -1,0 +1,29 @@
+{
+  "name": "agent-coord-mcp",
+  "version": "0.1.0",
+  "description": "Multi-agent coordination MCP server for Claude Code",
+  "type": "module",
+  "bin": {
+    "agent-coord": "./dist/cli.js",
+    "agent-coord-mcp": "./dist/mcp/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/cli.js start",
+    "stop": "node dist/cli.js stop",
+    "status": "node dist/cli.js status",
+    "daemon": "node dist/cli.js daemon"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "zod": "^3.24.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "typescript": "^5.8.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
