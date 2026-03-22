@@ -11,9 +11,9 @@ import { DEFAULT_PORT, PORT_FILE, PID_FILE, STATE_DIR } from "../shared/config.j
 
 function parseArgs(): { name: string; worktree: string; port: number } {
   const args = process.argv.slice(2);
-  let name = process.env.AGENT_COORD_NAME ?? "";
+  let name = process.env.AGENT_TOWER_NAME ?? "";
   let worktree = process.cwd();
-  let port = Number(process.env.AGENT_COORD_PORT) || DEFAULT_PORT;
+  let port = Number(process.env.AGENT_TOWER_PORT) || DEFAULT_PORT;
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--name" && args[i + 1]) name = args[++i];
@@ -72,7 +72,7 @@ async function main() {
   }, 30_000);
 
   const mcpServer = new McpServer({
-    name: "agent-coord",
+    name: "agent-tower",
     version: "0.1.0",
   });
 
@@ -95,6 +95,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  process.stderr.write(`agent-coord-mcp: ${err}\n`);
+  process.stderr.write(`agent-tower-mcp: ${err}\n`);
   process.exit(1);
 });

@@ -1,11 +1,11 @@
 {
-  "name": "agent-coord-mcp",
+  "name": "agent-tower",
   "version": "0.1.0",
-  "description": "Multi-agent coordination MCP server for Claude Code",
+  "description": "Coordination tower for multi-agent development workflows. Resource locking, announcements, and issue tracking across concurrent AI coding agents.",
   "type": "module",
   "bin": {
-    "agent-coord": "./dist/cli.js",
-    "agent-coord-mcp": "./dist/mcp/index.js"
+    "agent-tower": "./dist/cli.js",
+    "agent-tower-mcp": "./dist/mcp/index.js"
   },
   "scripts": {
     "build": "tsc",
