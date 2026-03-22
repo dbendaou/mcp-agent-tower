@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/banner.png" alt="Agent Tower" width="100%" />
+</p>
+
 # Agent Tower
 
 Coordination tower for multi-agent development workflows. Resource locking, announcements, and issue tracking across concurrent AI coding agents sharing local resources.
