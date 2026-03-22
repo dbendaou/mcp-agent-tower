@@ -31,20 +31,22 @@ Agent 3 (worktree C) → MCP stdio → HTTP → ┘
 ### Install
 
 ```bash
-npm install -g agent-tower
-# or
-pnpm add -g agent-tower
+git clone https://github.com/dbendaou/mcp-agent-tower.git
+cd mcp-agent-tower
+pnpm install
+pnpm build
 ```
 
 ### Configure MCP
 
-Add to your `.mcp.json` or Claude Code settings:
+Add to your `.mcp.json` or Claude Code settings, using the absolute path to where you cloned the repo:
 
 ```json
 {
   "mcpServers": {
     "agent-tower": {
-      "command": "agent-tower-mcp"
+      "command": "node",
+      "args": ["/absolute/path/to/mcp-agent-tower/dist/mcp/index.js"]
     }
   }
 }
@@ -58,8 +60,12 @@ That's it. The daemon auto-starts on first connection and auto-shuts down after 
 {
   "mcpServers": {
     "agent-tower": {
-      "command": "agent-tower-mcp",
-      "args": ["--name", "my-agent", "--worktree", "/path/to/worktree"]
+      "command": "node",
+      "args": [
+        "/absolute/path/to/mcp-agent-tower/dist/mcp/index.js",
+        "--name", "my-agent",
+        "--worktree", "/path/to/worktree"
+      ]
     }
   }
 }
@@ -142,15 +148,6 @@ All endpoints on `127.0.0.1:7420`. Agent identity via `x-agent-name` and `x-agen
 | GET | `/status` | Full coordination state |
 | GET | `/health` | Health check |
 | POST | `/shutdown` | Graceful shutdown |
-
-## Development
-
-```bash
-git clone https://github.com/dbendaou/mcp-agent-tower.git
-cd mcp-agent-tower
-pnpm install
-pnpm build
-```
 
 ## License
 
