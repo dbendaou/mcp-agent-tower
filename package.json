@@ -23,7 +23,25 @@
     "@types/node": "^22.15.3",
     "typescript": "^5.8.3"
   },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dbendaou/mcp-agent-tower.git"
+  },
+  "keywords": [
+    "mcp",
+    "agent",
+    "coordination",
+    "multi-agent",
+    "claude-code",
+    "resource-locking"
+  ],
   "engines": {
     "node": ">=20"
-  }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ]
 }
