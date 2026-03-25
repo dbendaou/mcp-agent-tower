@@ -106,6 +106,15 @@ export class DaemonClient {
     return this.fetch("GET", "/status");
   }
 
+  async startupCheckin(name?: string, worktree?: string): Promise<{
+    registration: { status: number; data: unknown };
+    status: { status: number; data: unknown };
+  }> {
+    const registration = await this.register(name, worktree);
+    const status = await this.getStatus();
+    return { registration, status };
+  }
+
   shutdown() {
     return this.fetch("POST", "/shutdown");
   }

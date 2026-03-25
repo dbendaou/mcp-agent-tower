@@ -3,12 +3,41 @@ import { z } from "zod";
 import type { DaemonClient } from "./daemon-client.js";
 
 export function registerTools(server: McpServer, client: DaemonClient): void {
+  let agentRegistered = false;
+
+  const REGISTRATION_WARNING =
+    "⚠️ You haven't called agent_register or startup_checkin yet. Register first so other agents know you exist.";
+
+  function wrapResponse(text: string, isError?: boolean): { content: { type: "text"; text: string }[]; isError?: boolean } {
+    const prefix = agentRegistered ? "" : REGISTRATION_WARNING + "\n\n";
+    return {
+      content: [{ type: "text" as const, text: prefix + text }],
+      ...(isError ? { isError } : {}),
+    };
+  }
+
+  server.tool(
+    "startup_checkin",
+    "IMPORTANT: Call this at the start of every conversation. Registers this agent and returns full coordination status (other agents, locks, announcements, issues) in one call.",
+    { name: z.string().describe("Agent name"), worktree: z.string().describe("Worktree path") },
+    async ({ name, worktree }) => {
+      const { registration, status } = await client.startupCheckin(name, worktree);
+      agentRegistered = true;
+      const result = {
+        registered: registration.data,
+        status: status.data,
+      };
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    },
+  );
+
   server.tool(
     "agent_register",
     "Register this agent with the coordination daemon. Called automatically on startup.",
     { name: z.string().describe("Agent name"), worktree: z.string().describe("Worktree path") },
     async ({ name, worktree }) => {
       const { data } = await client.register(name, worktree);
+      agentRegistered = true;
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     },
   );
@@ -19,7 +48,8 @@ export function registerTools(server: McpServer, client: DaemonClient): void {
     {},
     async () => {
       const { data } = await client.deregister();
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+      agentRegistered = false;
+      return wrapResponse(JSON.stringify(data, null, 2));
     },
   );
 
@@ -34,12 +64,9 @@ export function registerTools(server: McpServer, client: DaemonClient): void {
     async ({ resource, reason, ttlMs }) => {
       const { status, data } = await client.acquireLock(resource, reason ?? "", ttlMs);
       if (status === 409) {
-        return {
-          content: [{ type: "text", text: `CONFLICT: ${JSON.stringify(data, null, 2)}` }],
-          isError: true,
-        };
+        return wrapResponse(`CONFLICT: ${JSON.stringify(data, null, 2)}`, true);
       }
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+      return wrapResponse(JSON.stringify(data, null, 2));
     },
   );
 
@@ -50,12 +77,9 @@ export function registerTools(server: McpServer, client: DaemonClient): void {
     async ({ resource }) => {
       const { status, data } = await client.releaseLock(resource);
       if (status !== 200) {
-        return {
-          content: [{ type: "text", text: `ERROR: ${JSON.stringify(data, null, 2)}` }],
-          isError: true,
-        };
+        return wrapResponse(`ERROR: ${JSON.stringify(data, null, 2)}`, true);
       }
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+      return wrapResponse(JSON.stringify(data, null, 2));
     },
   );
 
@@ -65,7 +89,7 @@ export function registerTools(server: McpServer, client: DaemonClient): void {
     {},
     async () => {
       const { data } = await client.getLocks();
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+      return wrapResponse(JSON.stringify(data, null, 2));
     },
   );
 
@@ -78,7 +102,7 @@ export function registerTools(server: McpServer, client: DaemonClient): void {
     },
     async ({ message, ttlMs }) => {
       const { data } = await client.announce(message, ttlMs);
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+      return wrapResponse(JSON.stringify(data, null, 2));
     },
   );
 
@@ -88,7 +112,7 @@ export function registerTools(server: McpServer, client: DaemonClient): void {
     {},
     async () => {
       const { data } = await client.getAnnouncements();
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+      return wrapResponse(JSON.stringify(data, null, 2));
     },
   );
 
@@ -102,7 +126,7 @@ export function registerTools(server: McpServer, client: DaemonClient): void {
     },
     async ({ title, description, severity }) => {
       const { data } = await client.reportIssue(title, description, severity);
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+      return wrapResponse(JSON.stringify(data, null, 2));
     },
   );
 
@@ -113,12 +137,9 @@ export function registerTools(server: McpServer, client: DaemonClient): void {
     async ({ issueId }) => {
       const { status, data } = await client.resolveIssue(issueId);
       if (status !== 200) {
-        return {
-          content: [{ type: "text", text: `ERROR: ${JSON.stringify(data, null, 2)}` }],
-          isError: true,
-        };
+        return wrapResponse(`ERROR: ${JSON.stringify(data, null, 2)}`, true);
       }
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+      return wrapResponse(JSON.stringify(data, null, 2));
     },
   );
 
@@ -128,7 +149,7 @@ export function registerTools(server: McpServer, client: DaemonClient): void {
     {},
     async () => {
       const { data } = await client.getStatus();
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+      return wrapResponse(JSON.stringify(data, null, 2));
     },
   );
 }

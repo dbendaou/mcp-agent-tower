@@ -81,6 +81,7 @@ Environment variables: `AGENT_TOWER_NAME`, `AGENT_TOWER_PORT`
 
 | Tool | Purpose |
 |------|---------|
+| `startup_checkin` | **Start here.** Register + get full status in one call |
 | `agent_register` | Register with the daemon (auto on startup) |
 | `agent_deregister` | Unregister and release all locks |
 | `lock_acquire` | Claim exclusive access to a shared resource |
@@ -152,6 +153,30 @@ All endpoints on `127.0.0.1:7420`. Agent identity via `x-agent-name` and `x-agen
 | GET | `/status` | Full coordination state |
 | GET | `/health` | Health check |
 | POST | `/shutdown` | Graceful shutdown |
+
+## Recommended CLAUDE.md Snippet
+
+Add this to your project's `CLAUDE.md` (or `~/.claude/CLAUDE.md` for global use) to make agent-tower usage mandatory for every conversation:
+
+```markdown
+## Multi-Agent Coordination
+
+When working in worktrees or alongside other agents, use the **agent-tower** MCP tools to coordinate:
+
+- **IMPORTANT: Always call `startup_checkin` at the start of every conversation** — this registers you and shows what other agents are doing, their locks, and announcements. Do this before any other work.
+- **`lock_acquire(resource, reason)`** — Lock shared resources before using them (e.g. `"git-branch:feat/my-feature"`, `"port:4200"`, `"supabase-db"`)
+- **`lock_release(resource)`** — Release locks when done
+- **`announce(message)`** — Broadcast important state changes (e.g. "DB migration complete", "rebased master")
+- **`get_status()`** — Check what other agents are doing before starting work
+- **`report_issue(description)`** — Flag shared infrastructure problems
+
+### When to use:
+- **At conversation start**: always call `startup_checkin`
+- **Before creating/pushing a branch**: lock the branch name to avoid conflicts
+- **Before starting a dev server**: lock the port
+- **Before committing on a shared branch**: check status and lock
+- **After completing shared-state changes**: announce so other agents can react
+```
 
 ## License
 

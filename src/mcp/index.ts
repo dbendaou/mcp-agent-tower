@@ -74,6 +74,8 @@ async function main() {
   const mcpServer = new McpServer({
     name: "agent-tower",
     version: "0.1.0",
+    description:
+      "Multi-agent coordination tower. IMPORTANT: Call startup_checkin at the start of every conversation to register and get current status (other agents, locks, announcements). This ensures other agents know you exist.",
   });
 
   registerTools(mcpServer, client);
