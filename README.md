@@ -30,6 +30,11 @@ Agent 3 (worktree C) → MCP stdio → HTTP → ┘
 - **MCP server**: One stdio instance per agent, proxies tool calls to the daemon
 - **State is ephemeral** — no persistence, agents re-register on startup
 
+
+## Design docs
+
+- [Inter-agent communication bus](docs/inter-agent-communication.md) — proposed agent ask/reply mailbox (skills, correlation, phased A2A path)
+
 ## Quick Start
 
 ### Install
