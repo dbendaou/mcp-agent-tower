@@ -9,6 +9,7 @@ import {
   PORT_FILE,
   LOG_FILE,
 } from "./shared/config.js";
+import { DaemonClient } from "./mcp/daemon-client.js";
 
 function getDaemonPort(): number {
   try {
@@ -94,7 +95,11 @@ async function cmdStart() {
 async function cmdStop() {
   const port = getDaemonPort();
   try {
-    await httpPost(port, "/shutdown");
+    const client = new DaemonClient("agent-tower-cli", process.cwd(), port);
+    const registration = await client.register();
+    if (registration.status !== 200) throw new Error("CLI authentication failed");
+    const stopped = await client.shutdown();
+    if (stopped.status !== 200) throw new Error("Authenticated shutdown failed");
     console.log("Daemon stopped");
   } catch {
     const pid = getDaemonPid();
@@ -118,7 +123,12 @@ async function cmdStatus() {
   console.log(`Daemon running (PID ${pid}, port ${port})\n`);
 
   try {
-    const status = (await httpGet(port, "/status")) as Record<string, unknown>;
+    const client = new DaemonClient("agent-tower-cli", process.cwd(), port);
+    const registration = await client.register();
+    if (registration.status !== 200) throw new Error("CLI authentication failed");
+    const response = await client.getStatus();
+    if (response.status !== 200) throw new Error("status failed");
+    const status = response.data as Record<string, unknown>;
     const agents = status.agents as Array<Record<string, unknown>>;
     const locks = status.locks as Array<Record<string, unknown>>;
     const announcements = status.announcements as Array<Record<string, unknown>>;
@@ -149,6 +159,7 @@ async function cmdStatus() {
     for (const i of issues) {
       console.log(`  - [${i.severity}] ${i.title}: ${i.description}`);
     }
+    await client.deregister();
   } catch {
     console.error("Could not connect to daemon");
   }

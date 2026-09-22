@@ -61,11 +61,14 @@ async function main() {
 
   const client = new DaemonClient(name, worktree, port);
 
-  await client.register();
+  const registration = await client.register();
+  if (registration.status !== 200) throw new Error(`registration failed: ${JSON.stringify(registration.data)}`);
 
   const heartbeatInterval = setInterval(async () => {
     try {
-      await client.heartbeat();
+      const response = await client.heartbeat();
+      // Registration is safe to repeat; mutations are never blindly replayed.
+      if (response.status === 401) await client.register();
     } catch {
       // daemon may be down, will reconnect
     }

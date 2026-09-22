@@ -1,6 +1,6 @@
 # Inter-agent communication bus
 
-**Status:** Proposed  
+**Status:** Phase 1 implemented
 **Date:** 2026-09-21  
 **Scope:** Extend Agent Tower from a shared blackboard into a local agent bus so concurrent agents (including multiple browser / IDE flows) can ask each other questions and share answers.
 
@@ -62,6 +62,18 @@ Agent A (flow) ──MCP──► Tower daemon ◄──MCP── Agent B (flow)
 
 ## Proposed design
 
+## Settled Phase 1 decisions
+
+- A session is an immutable UUID plus a 256-bit opaque token. Display names may collide. Re-register/check-in with valid credentials updates that same session and its effective name/worktree.
+- Credentials are held in a store separate from public `Agent` records. All coordination routes require them; only health and initial registration are bootstrap exceptions. Shutdown is authenticated.
+- Ask creation snapshots eligible live recipients, excludes the sender, requires exactly one of `to` or `skill`, and fails when the snapshot is empty. Only snapshot recipients may reply. Skill fan-out is first-reply-wins.
+- `GET /bus/asks/:askId` and `agent_ask_status` are requester-only result lookup operations. `waitMs` is bounded and only controls how long that call waits; `ttlMs` independently controls ask expiry.
+- Requester departure cancels its asks. Recipient departure removes only that recipient and cancels an ask only after its entire eligible snapshot has gone. Terminal transitions wake waiters; expiry is enforced during reads/replies as well as cleanup.
+- Phase 1 keeps bounded request/message/context sizes, TTL/wait ranges, pending and terminal retention, audit metadata, and client timeouts. State, credentials, and audit data remain ephemeral in memory and timestamps remain numeric Unix milliseconds.
+- Existing announcements remain the broadcast primitive. SSE, A2A wire compatibility, delegation, persistence, and Redis/NATS remain deferred.
+
+The current bounds and defaults are defined centrally in `src/shared/config.ts`; HTTP validation applies independently of MCP schemas.
+
 ### 1. Identity upgrade
 
 Replace name-only registry keys with:
@@ -95,7 +107,7 @@ interface BusMessage {
     artifacts?: Array<{ type: string; content: unknown }>;
   };
   ttlMs: number;
-  createdAt: string;
+  createdAt: number;       // Unix milliseconds, matching existing state
   status: "pending" | "answered" | "expired" | "cancelled";
   hopCount?: number;
 }
