@@ -4,6 +4,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import { createRequestHandler } from "../daemon/routes.js";
 import { State } from "../daemon/state.js";
 import { DaemonClient } from "../mcp/daemon-client.js";
+import type { Agent, AskResult } from "../shared/types.js";
 
 let state: State; let server: ReturnType<typeof createServer>; let port: number;
 beforeEach(async () => {
@@ -102,4 +103,125 @@ test("terminal ask retention is bounded", () => {
   // Creating another ask runs retention cleanup before adding the live record.
   local.createAsk(requester.agentId, { to: recipient.agentId, question: "trigger cleanup" });
   assert.throws(() => local.getAsk(requester.agentId, oldest), /Ask not found/);
+});
+
+function restartState() {
+  // Keep the ephemeral port while replacing all daemon sessions and data.
+  state = new State();
+  server.removeAllListeners("request");
+  server.on("request", createRequestHandler(state, () => {}));
+}
+
+test("explicit deregistration survives heartbeats until an explicit check-in", async () => {
+  const a = await client("agent", "/a");
+  const oldId = a.agentId;
+  await a.deregister();
+  assert.equal(a.agentId, undefined);
+  for (let tick = 0; tick < 3; tick++) await a.heartbeat();
+  assert.equal(state.agentCount, 0);
+  const checkin = await a.startupCheckin("returned", "/new");
+  assert.equal(checkin.registration.status, 200);
+  assert.notEqual(a.agentId, oldId);
+  await a.heartbeat();
+  assert.equal(state.agentCount, 1);
+  assert.equal(state.getAgents()[0].name, "returned");
+});
+
+test("deregistration wins over overlapping heartbeat recovery", async () => {
+  const a = await client("agent", "/a");
+  restartState();
+  const recovering = a.heartbeat();
+  const leaving = a.deregister();
+  const nextTick = a.heartbeat();
+  await Promise.all([recovering, leaving, nextTick]);
+  assert.equal(state.agentCount, 0);
+  assert.equal(a.agentId, undefined);
+});
+
+test("restart recovery restores only successfully advertised skills", async () => {
+  const a = await client("requester", "/a"), b = await client("reviewer", "/b");
+  const skills = ["github.pr"];
+  assert.equal((await b.describe(skills)).status, 200);
+  skills[0] = "caller-mutated";
+  assert.equal((await b.describe([""])).status, 400);
+  await b.acquireLock("old-lock", "not replayed");
+  const oldId = b.agentId;
+  restartState();
+  await Promise.all([a.heartbeat(), b.heartbeat()]);
+  assert.notEqual(b.agentId, oldId);
+  assert.deepEqual(state.getLocks(), []);
+  const peers = (await a.agentsList()).data as Agent[];
+  assert.deepEqual(peers.find(peer => peer.agentId === b.agentId)?.skills, ["github.pr"]);
+  const ask = (await a.ask({ skill: "github.pr", question: "author?" })).data as AskResult;
+  assert.equal((await b.reply(ask.askId, "alice")).status, 200);
+  assert.equal(((await a.askStatus(ask.askId)).data as AskResult).answer, "alice");
+
+  // An intentional successful clear must also survive the next restart.
+  assert.equal((await b.describe([])).status, 200);
+  restartState();
+  await Promise.all([a.heartbeat(), b.heartbeat()]);
+  assert.equal((await a.ask({ skill: "github.pr", question: "author?" })).status, 404);
+});
+
+test("overlapping recovery and check-in reuse one session", async () => {
+  const a = await client("agent", "/a");
+  await a.describe(["code.review"]);
+  restartState();
+  await Promise.all([a.heartbeat(), a.startupCheckin("updated", "/updated"), a.heartbeat()]);
+  assert.equal(state.agentCount, 1);
+  assert.equal(state.getAgents()[0].agentId, a.agentId);
+  assert.equal(state.getAgents()[0].name, "updated");
+  assert.deepEqual(state.getAgents()[0].skills, ["code.review"]);
+});
+
+test("a failed skill restoration is retried on the next heartbeat", async () => {
+  const a = await client("agent", "/a");
+  await a.describe(["code.review"]);
+  restartState();
+  server.removeAllListeners("request");
+  const handler = createRequestHandler(state, () => {});
+  let rejectOnce = true;
+  server.on("request", (req, res) => {
+    if (req.url === "/agents/describe" && rejectOnce) {
+      rejectOnce = false;
+      req.resume();
+      res.writeHead(503, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Temporarily unavailable" }));
+    } else handler(req, res);
+  });
+  assert.equal((await a.heartbeat()).status, 503);
+  assert.deepEqual(state.getAgents()[0].skills, []);
+  const recoveredId = a.agentId;
+  assert.equal((await a.heartbeat()).status, 200);
+  assert.equal(a.agentId, recoveredId);
+  assert.equal(state.agentCount, 1);
+  assert.deepEqual(state.getAgents()[0].skills, ["code.review"]);
+});
+
+test("ask and result waits wake at TTL without polling or a cleanup sweep", { timeout: 3000 }, async () => {
+  const a = await client("requester", "/a"), b = await client("recipient", "/b");
+  const start = performance.now();
+  const ask = await a.ask({ to: b.agentId, question: "expire", ttlMs: 100, waitMs: 10000 });
+  assert.equal((ask.data as AskResult).status, "expired");
+  assert(performance.now() - start < 1500, "creation wait must stop near TTL, not waitMs");
+
+  const pending = (await a.ask({ to: b.agentId, question: "expire later", ttlMs: 100 })).data as AskResult;
+  const pollStart = performance.now();
+  const results = await Promise.all([a.askStatus(pending.askId, 10000), a.askStatus(pending.askId, 10000)]);
+  for (const result of results) assert.equal((result.data as AskResult).status, "expired");
+  assert(performance.now() - pollStart < 1500, "all result waiters must wake on expiry");
+});
+
+test("aborting a wait preserves the live ask for a later answer", async () => {
+  const a = state.registerAgent("requester", "/a").agent;
+  const b = state.registerAgent("recipient", "/b").agent;
+  const ask = state.createAsk(a.agentId, { to: b.agentId, question: "keep alive" });
+  const controller = new AbortController();
+  const waiting = state.waitForAsk(a.agentId, ask.askId, 10000, controller.signal);
+  controller.abort();
+  assert.equal((await waiting).status, "pending");
+  // A signal that was already aborted must not allocate another long-lived wait.
+  assert.equal((await state.waitForAsk(a.agentId, ask.askId, 10000, controller.signal)).status, "pending");
+  state.reply(b.agentId, ask.askId, "answer");
+  assert.equal(state.getAsk(a.agentId, ask.askId).answer, "answer");
 });

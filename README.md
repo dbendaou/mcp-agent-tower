@@ -191,7 +191,11 @@ All endpoints bind to `127.0.0.1:7420`. Registration returns an opaque session c
 
 ### Local threat model
 
-Authentication prevents accidental cross-session impersonation and isolates same-name agents, locks, inboxes, and ask results. It is **not** a security boundary against another process running as the same OS user: such a process can inspect process memory or local traffic. The daemon remains localhost-only, stores credentials and coordination state only in memory, and loses all sessions on restart. `DaemonClient` re-registers explicitly after an expired/restarted session; it never automatically replays lock, reply, issue, or other non-idempotent mutations.
+Authentication prevents accidental cross-session impersonation and isolates same-name agents, locks, inboxes, and ask results. It is **not** a security boundary against another process running as the same OS user: such a process can inspect process memory or local traffic. The daemon remains localhost-only, stores credentials and coordination state only in memory, and loses all sessions on restart. Active clients recover an expired/restarted session on heartbeat and restore their last successfully advertised skills; they never automatically replay lock, reply, issue, or other non-idempotent mutations. Explicit `agent_deregister` stops heartbeat recovery until the next `agent_register` or `startup_checkin`.
+
+### Running tests
+
+Run `pnpm test` to compile the current TypeScript sources and execute the regression suite. Tests use isolated HTTP servers on ephemeral loopback ports and do not connect to your running daemon.
 
 ## Recommended CLAUDE.md Snippet
 

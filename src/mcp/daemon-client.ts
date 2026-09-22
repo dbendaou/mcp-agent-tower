@@ -1,11 +1,15 @@
 import { request } from "node:http";
 import { CLIENT_TIMEOUT_MS, DEFAULT_PORT } from "../shared/config.js";
-import type { SessionCredentials } from "../shared/types.js";
+import type { Agent, SessionCredentials } from "../shared/types.js";
 
 export interface ClientResponse<T = unknown> { status: number; data: T }
 export class DaemonClient {
   private port: number; private agentName: string; private agentWorktree: string;
   private session?: SessionCredentials;
+  private active = false;
+  private skills: string[] = [];
+  private needsSkillRestore = false;
+  private lifecycle: Promise<void> = Promise.resolve();
   constructor(agentName: string, agentWorktree: string, port?: number) { this.agentName = agentName; this.agentWorktree = agentWorktree; this.port = port ?? DEFAULT_PORT; }
   get agentId(): string | undefined { return this.session?.agentId; }
 
@@ -17,15 +21,70 @@ export class DaemonClient {
     req.setTimeout(CLIENT_TIMEOUT_MS, () => req.destroy(new Error("Daemon request timed out"))); req.on("error", reject); if (payload) req.write(payload); req.end();
   }); }
   async isAlive() { try { return (await this.fetch("GET", "/health")).status === 200; } catch { return false; } }
-  async register(name = this.agentName, worktree = this.agentWorktree): Promise<ClientResponse> {
+  // Serialize session changes so a heartbeat recovery cannot overtake a
+  // deregistration, or race a check-in into creating a second session.
+  private withLifecycle<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.lifecycle.then(operation);
+    this.lifecycle = result.then(() => {}, () => {});
+    return result;
+  }
+  register(name?: string, worktree?: string): Promise<ClientResponse> {
+    return this.withLifecycle(() => this.registerSession(name ?? this.agentName, worktree ?? this.agentWorktree));
+  }
+  private async registerSession(name = this.agentName, worktree = this.agentWorktree): Promise<ClientResponse> {
+    let newSession = !this.session;
     let response = await this.fetch("POST", "/agents/register", { name, worktree });
-    if (response.status === 401 && this.session) { this.session = undefined; response = await this.fetch("POST", "/agents/register", { name, worktree }); }
-    if (response.status === 200) { const wire = response.data as { agent: unknown; credentials: SessionCredentials }; this.session = wire.credentials; this.agentName = name; this.agentWorktree = worktree; return { status: 200, data: wire.agent }; }
+    if (response.status === 401 && this.session) {
+      this.session = undefined;
+      newSession = true;
+      response = await this.fetch("POST", "/agents/register", { name, worktree });
+    }
+    if (response.status !== 200) return response;
+    const wire = response.data as { agent: Agent; credentials: SessionCredentials };
+    this.session = wire.credentials;
+    this.agentName = name;
+    this.agentWorktree = worktree;
+    this.active = true;
+    if (newSession) this.needsSkillRestore = this.skills.length > 0;
+    if (this.needsSkillRestore) return this.restoreSkills();
+    return { status: 200, data: wire.agent };
+  }
+  private async restoreSkills(): Promise<ClientResponse> {
+    const response = await this.fetch("POST", "/agents/describe", { skills: this.skills });
+    if (response.status === 200) this.needsSkillRestore = false;
     return response;
   }
-  deregister() { return this.fetch("POST", "/agents/deregister"); }
-  heartbeat() { return this.fetch("POST", "/agents/heartbeat"); }
-  describe(skills: string[]) { return this.fetch("POST", "/agents/describe", { skills }); }
+  deregister(): Promise<ClientResponse> {
+    return this.withLifecycle(async () => {
+      // Opt out even if the daemon is temporarily unavailable. Keep credentials
+      // on failure so a later explicit register can reuse a surviving session.
+      this.active = false;
+      if (!this.session) return { status: 200, data: { ok: true } };
+      const response = await this.fetch("POST", "/agents/deregister");
+      if (response.status === 200 || response.status === 401) this.session = undefined;
+      return response;
+    });
+  }
+  heartbeat(): Promise<ClientResponse> {
+    return this.withLifecycle(async () => {
+      if (!this.active) return { status: 200, data: { ok: true, skipped: true } };
+      const response = await this.fetch("POST", "/agents/heartbeat");
+      if (response.status === 401) return this.registerSession();
+      if (response.status === 200 && this.needsSkillRestore) return this.restoreSkills();
+      return response;
+    });
+  }
+  describe(skills: string[]): Promise<ClientResponse> {
+    const requestedSkills = [...skills];
+    return this.withLifecycle(async () => {
+      const response = await this.fetch("POST", "/agents/describe", { skills: requestedSkills });
+      if (response.status === 200) {
+        this.skills = [...(response.data as Agent).skills];
+        this.needsSkillRestore = false;
+      }
+      return response;
+    });
+  }
   agentsList() { return this.fetch("GET", "/agents"); }
   acquireLock(resource: string, reason: string, ttlMs?: number) { return this.fetch("POST", "/locks/acquire", { resource, reason, ttlMs }); }
   releaseLock(resource: string) { return this.fetch("POST", "/locks/release", { resource }); }

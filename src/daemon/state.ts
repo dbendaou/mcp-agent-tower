@@ -106,11 +106,29 @@ export class State {
   private result(a: AskRecord): AskResult { const { askId, status, createdAt, expiresAt, answer, artifacts, repliedBy } = a; return { askId, status, createdAt, expiresAt, ...(answer !== undefined ? { answer } : {}), ...(artifacts ? { artifacts } : {}), ...(repliedBy ? { repliedBy } : {}) }; }
   getAsk(requesterId: string, askId: string): AskResult { const a = this.asks.get(askId); if (!a) throw new StateError(404, "Ask not found"); if (a.requesterId !== requesterId) throw new StateError(403, "Only the requester may view this ask"); this.expireIfNeeded(a); return this.result(a); }
   async waitForAsk(requesterId: string, askId: string, waitMs: number, signal?: AbortSignal): Promise<AskResult> {
-    const initial = this.getAsk(requesterId, askId); if (initial.status !== "pending" || waitMs === 0) return initial;
+    const initial = this.getAsk(requesterId, askId);
+    if (initial.status !== "pending" || waitMs === 0 || signal?.aborted) return initial;
+    const deadline = Math.min(initial.expiresAt, Date.now() + waitMs);
     await new Promise<void>(resolve => {
-      const callbacks = this.waiters.get(askId) ?? new Set(); let timer: NodeJS.Timeout;
-      const done = () => { clearTimeout(timer); signal?.removeEventListener("abort", done); callbacks.delete(done); if (!callbacks.size) this.waiters.delete(askId); resolve(); };
-      callbacks.add(done); this.waiters.set(askId, callbacks); timer = setTimeout(done, waitMs); signal?.addEventListener("abort", done, { once: true });
+      const callbacks = this.waiters.get(askId) ?? new Set<() => void>();
+      let timer: NodeJS.Timeout;
+      const done = () => {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", done);
+        callbacks.delete(done);
+        if (!callbacks.size) this.waiters.delete(askId);
+        resolve();
+      };
+      const onTimeout = () => {
+        const remaining = deadline - Date.now();
+        // Timers can fire just before their wall-clock deadline.
+        if (remaining > 0) timer = setTimeout(onTimeout, remaining);
+        else done();
+      };
+      callbacks.add(done);
+      this.waiters.set(askId, callbacks);
+      timer = setTimeout(onTimeout, Math.max(0, deadline - Date.now()));
+      signal?.addEventListener("abort", done, { once: true });
     });
     return this.getAsk(requesterId, askId);
   }

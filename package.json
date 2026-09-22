@@ -14,7 +14,7 @@
     "stop": "node dist/cli.js stop",
     "status": "node dist/cli.js status",
     "daemon": "node dist/cli.js daemon",
-    "test": "node --test dist/test/*.test.js"
+    "test": "pnpm build && node --test dist/test/*.test.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",

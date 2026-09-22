@@ -66,9 +66,8 @@ async function main() {
 
   const heartbeatInterval = setInterval(async () => {
     try {
-      const response = await client.heartbeat();
-      // Registration is safe to repeat; mutations are never blindly replayed.
-      if (response.status === 401) await client.register();
+      // The client recovers lost sessions, but respects explicit deregistration.
+      await client.heartbeat();
     } catch {
       // daemon may be down, will reconnect
     }
