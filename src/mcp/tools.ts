@@ -16,18 +16,23 @@ export function registerTools(server: McpServer, client: DaemonClient): void {
     };
   }
 
+  function result(response: { status: number; data: unknown }) {
+    const error = response.status < 200 || response.status >= 300;
+    return wrapResponse(`${error ? `ERROR ${response.status}: ` : ""}${JSON.stringify(response.data, null, 2)}`, error);
+  }
+
   server.tool(
     "startup_checkin",
     "IMPORTANT: Call this at the start of every conversation. Registers this agent and returns full coordination status (other agents, locks, announcements, issues) in one call.",
     { name: z.string().describe("Agent name"), worktree: z.string().describe("Worktree path") },
     async ({ name, worktree }) => {
       const { registration, status } = await client.startupCheckin(name, worktree);
-      agentRegistered = true;
+      agentRegistered = registration.status === 200;
       const result = {
         registered: registration.data,
         status: status.data,
       };
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], ...(agentRegistered ? {} : { isError: true }) };
     },
   );
 
@@ -36,9 +41,9 @@ export function registerTools(server: McpServer, client: DaemonClient): void {
     "Register this agent with the coordination daemon. Called automatically on startup.",
     { name: z.string().describe("Agent name"), worktree: z.string().describe("Worktree path") },
     async ({ name, worktree }) => {
-      const { data } = await client.register(name, worktree);
-      agentRegistered = true;
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+      const response = await client.register(name, worktree);
+      agentRegistered = response.status === 200;
+      return result(response);
     },
   );
 
@@ -47,9 +52,9 @@ export function registerTools(server: McpServer, client: DaemonClient): void {
     "Unregister this agent and release all its locks.",
     {},
     async () => {
-      const { data } = await client.deregister();
+      const response = await client.deregister();
       agentRegistered = false;
-      return wrapResponse(JSON.stringify(data, null, 2));
+      return result(response);
     },
   );
 
@@ -63,10 +68,7 @@ export function registerTools(server: McpServer, client: DaemonClient): void {
     },
     async ({ resource, reason, ttlMs }) => {
       const { status, data } = await client.acquireLock(resource, reason ?? "", ttlMs);
-      if (status === 409) {
-        return wrapResponse(`CONFLICT: ${JSON.stringify(data, null, 2)}`, true);
-      }
-      return wrapResponse(JSON.stringify(data, null, 2));
+      return result({ status, data });
     },
   );
 
@@ -76,10 +78,7 @@ export function registerTools(server: McpServer, client: DaemonClient): void {
     { resource: z.string().describe("Resource identifier to release") },
     async ({ resource }) => {
       const { status, data } = await client.releaseLock(resource);
-      if (status !== 200) {
-        return wrapResponse(`ERROR: ${JSON.stringify(data, null, 2)}`, true);
-      }
-      return wrapResponse(JSON.stringify(data, null, 2));
+      return result({ status, data });
     },
   );
 
@@ -88,8 +87,7 @@ export function registerTools(server: McpServer, client: DaemonClient): void {
     "List all currently active locks across all agents.",
     {},
     async () => {
-      const { data } = await client.getLocks();
-      return wrapResponse(JSON.stringify(data, null, 2));
+      return result(await client.getLocks());
     },
   );
 
@@ -101,8 +99,7 @@ export function registerTools(server: McpServer, client: DaemonClient): void {
       ttlMs: z.number().optional().describe("How long to keep (default: 30 min)"),
     },
     async ({ message, ttlMs }) => {
-      const { data } = await client.announce(message, ttlMs);
-      return wrapResponse(JSON.stringify(data, null, 2));
+      return result(await client.announce(message, ttlMs));
     },
   );
 
@@ -111,8 +108,7 @@ export function registerTools(server: McpServer, client: DaemonClient): void {
     "View all active announcements from other agents.",
     {},
     async () => {
-      const { data } = await client.getAnnouncements();
-      return wrapResponse(JSON.stringify(data, null, 2));
+      return result(await client.getAnnouncements());
     },
   );
 
@@ -125,8 +121,7 @@ export function registerTools(server: McpServer, client: DaemonClient): void {
       severity: z.enum(["low", "medium", "high", "critical"]).optional().describe("Severity level"),
     },
     async ({ title, description, severity }) => {
-      const { data } = await client.reportIssue(title, description, severity);
-      return wrapResponse(JSON.stringify(data, null, 2));
+      return result(await client.reportIssue(title, description, severity));
     },
   );
 
@@ -136,10 +131,7 @@ export function registerTools(server: McpServer, client: DaemonClient): void {
     { issueId: z.string().describe("Issue ID to resolve") },
     async ({ issueId }) => {
       const { status, data } = await client.resolveIssue(issueId);
-      if (status !== 200) {
-        return wrapResponse(`ERROR: ${JSON.stringify(data, null, 2)}`, true);
-      }
-      return wrapResponse(JSON.stringify(data, null, 2));
+      return result({ status, data });
     },
   );
 
@@ -148,8 +140,17 @@ export function registerTools(server: McpServer, client: DaemonClient): void {
     "Full coordination overview: all agents, locks, announcements, and open issues.",
     {},
     async () => {
-      const { data } = await client.getStatus();
-      return wrapResponse(JSON.stringify(data, null, 2));
+      return result(await client.getStatus());
     },
   );
+
+  server.tool("agent_describe", "Advertise the skills this agent can answer asks for.", { skills: z.array(z.string().min(1).max(100)).max(32) }, async ({ skills }) => result(await client.describe(skills)));
+  server.tool("agents_list", "List live peer sessions and their advertised skills.", {}, async () => result(await client.agentsList()));
+  server.tool("agent_ask", "Ask one agent ID or all live agents with a skill. A wait timeout returns pending; the ask remains live until its TTL.", {
+    to: z.string().uuid().optional(), skill: z.string().min(1).max(100).optional(), question: z.string().min(1).max(16000), context: z.record(z.unknown()).optional(), ttlMs: z.number().int().min(100).max(600000).optional(), waitMs: z.number().int().min(0).max(30000).optional(),
+  }, async (input) => result(await client.ask(input)));
+  server.tool("agent_ask_status", "Get a previous ask result. Only its requester can poll it; optional waiting is bounded.", { askId: z.string().uuid(), waitMs: z.number().int().min(0).max(30000).optional() }, async ({ askId, waitMs }) => result(await client.askStatus(askId, waitMs)));
+  server.tool("agent_inbox", "List pending asks assigned to this agent.", {}, async () => result(await client.inbox()));
+  server.tool("agent_reply", "Reply to an assigned ask. The first valid reply wins.", { askId: z.string().uuid(), answer: z.string().min(1).max(16000), artifacts: z.array(z.object({ type: z.string().min(1).max(100), content: z.unknown() })).max(20).optional() }, async ({ askId, answer, artifacts }) => result(await client.reply(askId, answer, artifacts as Array<{ type: string; content: unknown }> | undefined)));
+  server.tool("agent_broadcast", "Broadcast through the existing announcement board.", { message: z.string().min(1).max(16000), ttlMs: z.number().int().positive().optional() }, async ({ message, ttlMs }) => result(await client.announce(message, ttlMs)));
 }

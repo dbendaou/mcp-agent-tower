@@ -61,10 +61,12 @@ async function main() {
 
   const client = new DaemonClient(name, worktree, port);
 
-  await client.register();
+  const registration = await client.register();
+  if (registration.status !== 200) throw new Error(`registration failed: ${JSON.stringify(registration.data)}`);
 
   const heartbeatInterval = setInterval(async () => {
     try {
+      // The client recovers lost sessions, but respects explicit deregistration.
       await client.heartbeat();
     } catch {
       // daemon may be down, will reconnect
@@ -73,7 +75,7 @@ async function main() {
 
   const mcpServer = new McpServer({
     name: "agent-tower",
-    version: "0.1.0",
+    version: "0.2.0",
     description:
       "Multi-agent coordination tower. IMPORTANT: Call startup_checkin at the start of every conversation to register and get current status (other agents, locks, announcements). This ensures other agents know you exist.",
   });

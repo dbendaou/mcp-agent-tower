@@ -4,7 +4,7 @@
 
 # Agent Tower
 
-Coordination tower for multi-agent development workflows. Resource locking, announcements, and issue tracking across concurrent AI coding agents sharing local resources.
+Coordination tower for multi-agent development workflows. Resource locking, announcements, issue tracking, and authenticated ask/reply messaging across concurrent AI coding agents sharing local resources.
 
 ## The Problem
 
@@ -33,16 +33,18 @@ Agent 3 (worktree C) → MCP stdio → HTTP → ┘
 
 ## Design docs
 
-- [Inter-agent communication bus](docs/inter-agent-communication.md) — proposed agent ask/reply mailbox (skills, correlation, phased A2A path)
+- [Inter-agent communication bus](docs/inter-agent-communication.md) — Phase 1 decisions and future A2A path
 
 ## Quick Start
 
 ### Install
 
+Requires Node.js 20 or newer and pnpm. To install release **v0.2.0** from source:
+
 ```bash
-git clone https://github.com/dbendaou/mcp-agent-tower.git
+git clone --branch v0.2.0 https://github.com/dbendaou/mcp-agent-tower.git
 cd mcp-agent-tower
-pnpm install
+pnpm install --frozen-lockfile
 pnpm build
 ```
 
@@ -82,6 +84,36 @@ That's it. The daemon auto-starts on first connection and auto-shuts down after 
 
 Environment variables: `AGENT_TOWER_NAME`, `AGENT_TOWER_PORT`
 
+### Upgrade from 0.1.0 to 0.2.0
+
+The daemon's authenticated session protocol changed. All MCP clients sharing a daemon must upgrade together; old and new processes cannot be mixed. There is no automatic protocol-version check.
+
+1. Finish active work and stop or disconnect every Agent Tower MCP client in your agent hosts. Keep them disconnected until the upgrade is complete so they cannot restart the old daemon.
+2. In your existing clone, stop the daemon **before** replacing the old build:
+
+   ```bash
+   node dist/cli.js stop
+   ```
+
+   Restarting clears all in-memory sessions, locks, asks, announcements, and issues. Save any results you need first.
+
+3. With a clean checkout (commit or stash your own changes first), install the release:
+
+   ```bash
+   git fetch origin --tags
+   git switch --detach v0.2.0
+   pnpm install --frozen-lockfile
+   pnpm build
+   pnpm test
+   ```
+
+4. Reconnect or restart every agent host's MCP connection. Keep its configured absolute path pointing to this clone's `dist/mcp/index.js`. The first connection starts the new daemon. Call `startup_checkin` in each agent, advertise skills again with `agent_describe`, and reacquire any required locks.
+5. Verify with `node dist/cli.js status` and the [two-agent ask/reply example](#two-agent-askreply) below. The MCP server reports version `0.2.0` during initialization.
+
+This is a local coordination service. Both agents must connect to the same daemon; it does not keep local agents running while their computer is asleep. Agents must poll `agent_inbox` and explicitly reply; the daemon does not run an AI responder.
+
+See [CHANGELOG.md](CHANGELOG.md) for the release contents.
+
 ## MCP Tools
 
 | Tool | Purpose |
@@ -89,6 +121,13 @@ Environment variables: `AGENT_TOWER_NAME`, `AGENT_TOWER_PORT`
 | `startup_checkin` | **Start here.** Register + get full status in one call |
 | `agent_register` | Register with the daemon (auto on startup) |
 | `agent_deregister` | Unregister and release all locks |
+| `agent_describe` | Advertise this session's skills |
+| `agents_list` | List live peer IDs and skills |
+| `agent_ask` | Ask a peer by ID or fan out by skill |
+| `agent_ask_status` | Poll (or briefly wait for) a previous ask result |
+| `agent_inbox` | Read asks assigned to this session |
+| `agent_reply` | Submit the first correlated reply to an ask |
+| `agent_broadcast` | Broadcast using the existing announcement board |
 | `lock_acquire` | Claim exclusive access to a shared resource |
 | `lock_release` | Release a lock |
 | `lock_list` | View all active locks |
@@ -113,6 +152,24 @@ Agent 1: lock_release("supabase-db")
 Agent 2: lock_acquire("supabase-db", "seeding test data")
          → Lock acquired
 ```
+
+### Two-agent ask/reply
+
+```text
+Agent B: startup_checkin({ name: "reviewer", worktree: "/work/reviewer" })
+Agent B: agent_describe({ skills: ["code.review"] })
+
+Agent A: startup_checkin({ name: "author", worktree: "/work/author" })
+Agent A: agent_ask({ skill: "code.review", question: "Is PR #42 ready?", waitMs: 5000 })
+         → { askId, status: "pending" }       # host wait elapsed; ask is still live
+
+Agent B: agent_inbox()                         # poll from the agent host periodically
+Agent B: agent_reply({ askId, answer: "Yes" })
+Agent A: agent_ask_status({ askId, waitMs: 5000 })
+         → { status: "answered", answer: "Yes" }
+```
+
+Hosts should poll `agent_inbox` at useful boundaries and poll `agent_ask_status` when an initial wait returns `pending`. A `waitMs` timeout does **not** expire an ask; `ttlMs` controls its independent lifetime. Broadcasts continue to use `announce`/`agent_broadcast` rather than bus asks.
 
 ## CLI
 
@@ -139,14 +196,19 @@ State directory: `~/.agent-tower/` (PID file, port file, daemon log)
 
 ## HTTP API
 
-All endpoints on `127.0.0.1:7420`. Agent identity via `x-agent-name` and `x-agent-worktree` headers.
+All endpoints bind to `127.0.0.1:7420`. Registration returns an opaque session credential used internally by `DaemonClient`; subsequent coordination calls require `x-agent-id` and `x-agent-token`. Tokens are not included in public agents, tool output, status, messages, audit metadata, or logs. Health and initial registration are the only unauthenticated bootstrap operations.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | POST | `/agents/register` | Register an agent |
 | POST | `/agents/deregister` | Unregister an agent |
 | POST | `/agents/heartbeat` | Update last-seen timestamp |
+| POST | `/agents/describe` | Replace advertised skills |
 | GET | `/agents` | List all agents |
+| POST | `/bus/ask` | Create a directed or skill-routed ask |
+| GET | `/bus/inbox` | Caller-specific pending inbox |
+| POST | `/bus/reply` | Reply to an assigned ask |
+| GET | `/bus/asks/:askId` | Requester-only result lookup (`waitMs` query optional) |
 | POST | `/locks/acquire` | Acquire a lock (409 on conflict) |
 | POST | `/locks/release` | Release a lock |
 | GET | `/locks` | List all locks |
@@ -155,9 +217,17 @@ All endpoints on `127.0.0.1:7420`. Agent identity via `x-agent-name` and `x-agen
 | POST | `/issues` | Report an issue |
 | POST | `/issues/resolve` | Resolve an issue |
 | GET | `/issues` | List all issues |
-| GET | `/status` | Full coordination state |
+| GET | `/status` | Coordination state plus caller's inbox |
 | GET | `/health` | Health check |
 | POST | `/shutdown` | Graceful shutdown |
+
+### Local threat model
+
+Authentication prevents accidental cross-session impersonation and isolates same-name agents, locks, inboxes, and ask results. It is **not** a security boundary against another process running as the same OS user: such a process can inspect process memory or local traffic. The daemon remains localhost-only, stores credentials and coordination state only in memory, and loses all sessions on restart. Active clients recover an expired/restarted session on heartbeat and restore their last successfully advertised skills; they never automatically replay lock, reply, issue, or other non-idempotent mutations. Explicit `agent_deregister` stops heartbeat recovery until the next `agent_register` or `startup_checkin`.
+
+### Running tests
+
+Run `pnpm test` to compile the current TypeScript sources and execute the regression suite. Tests use isolated HTTP servers on ephemeral loopback ports and do not connect to your running daemon.
 
 ## Recommended CLAUDE.md Snippet
 
@@ -181,6 +251,8 @@ When working in worktrees or alongside other agents, use the **agent-tower** MCP
 - **Before starting a dev server**: lock the port
 - **Before committing on a shared branch**: check status and lock
 - **After completing shared-state changes**: announce so other agents can react
+- **When able to answer specialist questions**: call `agent_describe`, poll `agent_inbox`, and use `agent_reply`
+- **When an ask returns pending**: retain its `askId` and poll `agent_ask_status`; do not assume the wait timeout expired the ask
 ```
 
 ## License

@@ -1,14 +1,26 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-
 export const DEFAULT_PORT = 7420;
 export const STATE_DIR = join(homedir(), ".agent-tower");
 export const PID_FILE = join(STATE_DIR, "daemon.pid");
 export const PORT_FILE = join(STATE_DIR, "daemon.port");
 export const LOG_FILE = join(STATE_DIR, "daemon.log");
-
 export const CLEANUP_INTERVAL_MS = 30_000;
 export const AGENT_STALE_TIMEOUT_MS = 5 * 60_000;
 export const DEFAULT_LOCK_TTL_MS = 10 * 60_000;
 export const DEFAULT_ANNOUNCEMENT_TTL_MS = 30 * 60_000;
 export const AUTO_SHUTDOWN_MS = 30 * 60_000;
+export const DEFAULT_ASK_TTL_MS = 60_000;
+export const MIN_ASK_TTL_MS = 100;
+export const MAX_ASK_TTL_MS = 10 * 60_000;
+export const MAX_WAIT_MS = 30_000;
+export const MAX_MESSAGE_LENGTH = 16_000;
+export const MAX_CONTEXT_BYTES = 32_000;
+export const MAX_BODY_BYTES = 64_000;
+export const MAX_SKILLS = 32;
+export const MAX_SKILL_LENGTH = 100;
+export const MAX_PENDING_ASKS = 1_000;
+export const MAX_TERMINAL_ASKS = 1_000;
+export const TERMINAL_RETENTION_MS = 5 * 60_000;
+export const MAX_AUDIT_EVENTS = 500;
+export const CLIENT_TIMEOUT_MS = 35_000;

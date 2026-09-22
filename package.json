@@ -1,6 +1,6 @@
 {
   "name": "agent-tower",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Coordination tower for multi-agent development workflows. Resource locking, announcements, and issue tracking across concurrent AI coding agents.",
   "type": "module",
   "bin": {
@@ -13,7 +13,8 @@
     "start": "node dist/cli.js start",
     "stop": "node dist/cli.js stop",
     "status": "node dist/cli.js status",
-    "daemon": "node dist/cli.js daemon"
+    "daemon": "node dist/cli.js daemon",
+    "test": "pnpm build && node --test dist/test/*.test.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
