@@ -39,10 +39,12 @@ Agent 3 (worktree C) → MCP stdio → HTTP → ┘
 
 ### Install
 
+Requires Node.js 20 or newer and pnpm. To install release **v0.2.0** from source:
+
 ```bash
-git clone https://github.com/dbendaou/mcp-agent-tower.git
+git clone --branch v0.2.0 https://github.com/dbendaou/mcp-agent-tower.git
 cd mcp-agent-tower
-pnpm install
+pnpm install --frozen-lockfile
 pnpm build
 ```
 
@@ -81,6 +83,36 @@ That's it. The daemon auto-starts on first connection and auto-shuts down after 
 ```
 
 Environment variables: `AGENT_TOWER_NAME`, `AGENT_TOWER_PORT`
+
+### Upgrade from 0.1.0 to 0.2.0
+
+The daemon's authenticated session protocol changed. All MCP clients sharing a daemon must upgrade together; old and new processes cannot be mixed. There is no automatic protocol-version check.
+
+1. Finish active work and stop or disconnect every Agent Tower MCP client in your agent hosts. Keep them disconnected until the upgrade is complete so they cannot restart the old daemon.
+2. In your existing clone, stop the daemon **before** replacing the old build:
+
+   ```bash
+   node dist/cli.js stop
+   ```
+
+   Restarting clears all in-memory sessions, locks, asks, announcements, and issues. Save any results you need first.
+
+3. With a clean checkout (commit or stash your own changes first), install the release:
+
+   ```bash
+   git fetch origin --tags
+   git switch --detach v0.2.0
+   pnpm install --frozen-lockfile
+   pnpm build
+   pnpm test
+   ```
+
+4. Reconnect or restart every agent host's MCP connection. Keep its configured absolute path pointing to this clone's `dist/mcp/index.js`. The first connection starts the new daemon. Call `startup_checkin` in each agent, advertise skills again with `agent_describe`, and reacquire any required locks.
+5. Verify with `node dist/cli.js status` and the [two-agent ask/reply example](#two-agent-askreply) below. The MCP server reports version `0.2.0` during initialization.
+
+This is a local coordination service. Both agents must connect to the same daemon; it does not keep local agents running while their computer is asleep. Agents must poll `agent_inbox` and explicitly reply; the daemon does not run an AI responder.
+
+See [CHANGELOG.md](CHANGELOG.md) for the release contents.
 
 ## MCP Tools
 
